@@ -21,30 +21,31 @@ import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
 
 # InfluxDB connections settings
-host = '10.0.80.30'
+host = "10.0.80.30"
 dbname = 'energy'
 
 INFLUX_CLIENT = InfluxDBClient(host, database=dbname)
 
 MQTT_CLIENT = mqtt.Client()
-MQTT_CLIENT.connect("10.0.80.30", 1883, 60)
+MQTT_CLIENT.connect(host, 1883, 60)
 
 
-CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.102')
+CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.101')
 
 
-CHARGE_STATES = [
-"START",
-"NIGHT_CHECK",
-"DISCONNECT",
-"NIGHT",
-"FAULT",
-"MPPT",
-"ABSORPTION",
-"FLOAT",
-"EQUALIZE",
-"SLAVE",
-]
+CHARGE_STATES = (
+    "START",
+    "NIGHT_CHECK",
+    "DISCONNECT",
+    "NIGHT",
+    "FAULT",
+    "MPPT",
+    "ABSORPTION",
+    "FLOAT",
+    "EQUALIZE",
+    "SLAVE"
+)
+
 
 class CurrentReader(object):
 
@@ -69,12 +70,14 @@ class VoltageReader(object):
 
 ################
 announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
-whours_announcement = Announcement("whours_today", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="house/power/")
+# whours_announcement = Announcement("whours_today", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="house/power/")
 
 transmit_time = time.time() + 2
 
 previous_aggregate_time = datetime.datetime.utcnow()
 next_aggregate_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+print("Will aggregate at %s" % next_aggregate_time)
+next_charge_state_check_time = maya.now()
 
 while True:
     before = time.time()
@@ -120,21 +123,32 @@ while True:
         announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
         transmit_time = time.time() + 2
 
-        # Also write charge state at this time.
-        response = INFLUX_CLIENT.query(
-            "select charge_state FROM charge_states ORDER BY time DESC LIMIT 1")
-        points = response.get_points()
-        previous_charge_state = list(points)[0]['charge_state']
+        # CHARGE_STATE
+        # See if it's charge_state time.
+        if maya.now() > next_charge_state_check_time:
 
-        if charge_state != previous_charge_state:
-            INFLUX_CLIENT.write_points([{"measurement": "charge_states",
-                                         "time": datetime.datetime.utcnow(),
-                                         "fields": {"charge_state": charge_state}}])
+            response = INFLUX_CLIENT.query(
+                "select charge_state FROM charge_states ORDER BY time DESC LIMIT 1")
+            points = response.get_points()
+
+            try:
+                previous_charge_state_dict = list(points)[0]
+                previous_charge_state = previous_charge_state_dict['charge_state']
+            except IndexError:  # ie, we have no previous charge state.
+                previous_charge_state = "UNKNOWN"
+
+            if charge_state != previous_charge_state:
+                INFLUX_CLIENT.write_points([{"measurement": "charge_states",
+                                             "time": datetime.datetime.utcnow(),
+                                             "fields": {"charge_state": charge_state}}])
+                next_charge_state_check_time = maya.now().add(minutes=10)
 
         if datetime.datetime.utcnow() > next_aggregate_time:
+            print("Time to aggregate!")
+            zero_out = charge_state == "FLOAT"
             aggregator = EnergyAggregator()
             aggregator.take_readings(begin=previous_aggregate_time)
             aggregator.get_amp_averages()
             previous_aggregate_time = next_aggregate_time
-            next_aggregate_time = aggregator.go(next_aggregate_time)
+            next_aggregate_time = aggregator.go(next_aggregate_time, zero_out=zero_out)
 

@@ -8,6 +8,7 @@ import os
 from push_to_datastores import Announcement
 
 DEBUG = False
+PENALTY = .15
 
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
@@ -38,6 +39,14 @@ while True:
     shunt_announcement.include_for_average("shunt_1", power_dict['a1'])
     shunt_announcement.include_for_average("shunt_2", power_dict['a2'])
     shunt_announcement.include_for_average("shunt_3", power_dict['a3'])
+
+    net = power_dict['a1'] + power_dict['a2'] + power_dict['a3']
+    if net < 0:
+        penalty = net * PENALTY
+    else:
+        penalty = 0
+
+    shunt_announcement.include_for_average("penalty", penalty)
 
     if time.time() > transmit_time:
         shunt_announcement.transmit()
