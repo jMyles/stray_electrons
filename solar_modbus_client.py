@@ -1,4 +1,7 @@
 from __future__ import print_function
+
+from statistics import mean
+
 import maya
 import time
 import datetime
@@ -8,7 +11,7 @@ from push_to_datastores import Announcement
 from client import CHARGE_CONTROLLER, INFLUX_CLIENT, MQTT_CLIENT
 
 DEBUG = False
-
+SECONDS_BETWEEN_AVERAGES = 20
 
 import paho.mqtt.client as mqtt
 
@@ -51,10 +54,10 @@ class VoltageReader(object):
 announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
 # whours_announcement = Announcement("whours_today", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="house/power/")
 
-transmit_time = time.time() + 2
+transmit_time = time.time()
 
 previous_aggregate_time = datetime.datetime.utcnow()
-next_aggregate_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+next_aggregate_time = datetime.datetime.utcnow()
 print("Will aggregate at %s" % next_aggregate_time)
 next_charge_state_check_time = maya.now()
 
@@ -115,41 +118,76 @@ while True:
         average_voltage = announcement.influx_payload['fields']['battery_voltage']
         # Get yesterday's voltage at this time
         v_response = INFLUX_CLIENT.query(
-            "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC LIMIT 1".format(maya.when('yesterday').epoch))
-        yesterday_voltage = list(v_response.get_points())[0]['battery_voltage']
-        voltage_diff = round(average_voltage - yesterday_voltage, 3)
+            "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC LIMIT 1".format(int(maya.when('yesterday').epoch)))
+        _24h_ago_voltage = list(v_response.get_points())[0]['battery_voltage']
+        voltage_diff = round(average_voltage - _24h_ago_voltage, 3)
         announcement.include_as_definitive("24h_voltage_change", voltage_diff)
         announcement.transmit()
 
         announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
-        transmit_time = time.time() + 2
+        transmit_time = time.time() + SECONDS_BETWEEN_AVERAGES
 
         # CHARGE_STATE
         # See if it's charge_state time.
-        if maya.now() > next_charge_state_check_time:
 
-            response = INFLUX_CLIENT.query(
-                "select charge_state FROM charge_states ORDER BY time DESC LIMIT 1")
-            points = response.get_points()
+        # TODO: Charge states are a shitshow.
+        # if maya.now() > next_charge_state_check_time:
+        #
+        #     response = INFLUX_CLIENT.query(
+        #         "select charge_state FROM charge_states ORDER BY time DESC LIMIT 1")
+        #     points = response.get_points()
+        #
+        #     try:
+        #         previous_charge_state_dict = list(points)[0]
+        #         previous_charge_state = previous_charge_state_dict['charge_state']
+        #     except IndexError:  # ie, we have no previous charge state.
+        #         previous_charge_state = "UNKNOWN"
+        #
+        #     if charge_state != previous_charge_state:
+        #         INFLUX_CLIENT.write_points([{"measurement": "charge_states",
+        #                                      "time": datetime.datetime.utcnow(),
+        #                                      "fields": {"charge_state": charge_state}}])
+        #         next_charge_state_check_time = maya.now().add(minutes=10)
 
-            try:
-                previous_charge_state_dict = list(points)[0]
-                previous_charge_state = previous_charge_state_dict['charge_state']
-            except IndexError:  # ie, we have no previous charge state.
-                previous_charge_state = "UNKNOWN"
-
-            if charge_state != previous_charge_state:
-                INFLUX_CLIENT.write_points([{"measurement": "charge_states",
-                                             "time": datetime.datetime.utcnow(),
-                                             "fields": {"charge_state": charge_state}}])
-                next_charge_state_check_time = maya.now().add(minutes=10)
-
-        if datetime.datetime.utcnow() > next_aggregate_time:
+        now = datetime.datetime.utcnow()
+        if now > next_aggregate_time:
             print("Time to aggregate!")
             zero_out = charge_state == "FLOAT"
             aggregator = EnergyAggregator()
-            aggregator.take_readings(begin=previous_aggregate_time)
-            aggregator.get_amp_averages()
+            yesterday = maya.when("yesterday").datetime(naive=True)
+            aggregator.take_readings(begin=yesterday, end=now)
+            aggregator.get_amp_averages(begin=yesterday, end_minute=now)
             previous_aggregate_time = next_aggregate_time
-            next_aggregate_time = aggregator.go(next_aggregate_time, zero_out=zero_out)
+
+            # Average voltage over last 24 hours.
+            v_response = INFLUX_CLIENT.query(
+                "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC".format(
+                    int(maya.when('yesterday').epoch)))
+            _24h_voltages = [r['battery_voltage'] for r in v_response.get_points()]
+            mean_voltage = mean(_24h_voltages)
+            min_voltage = min(_24h_voltages)
+            voltage_announcement = Announcement("voltage_24h_averages", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
+            voltage_announcement.include_as_definitive("24h_average_voltage", round(mean_voltage, 3))
+            voltage_announcement.include_as_definitive("24h_min_voltage", round(min_voltage, 3))
+            voltage_announcement.transmit()
+
+            # Get the whours for each value.
+            # We take the average amps through the past 24 hours.
+            penalty_whours_24 = aggregator.amp_averages[0][1]['penalty']
+            shunt_1_whours_24h = aggregator.amp_averages[0][1]['shunt_1']
+            shunt_2_whours_24h = aggregator.amp_averages[0][1]['shunt_2']
+            shunt_3_whours_24h = aggregator.amp_averages[0][1]['shunt_3']
+            whours_announcement = Announcement("shunt_readings_24h_average", INFLUX_CLIENT, MQTT_CLIENT,
+                                                mqtt_topic_prefix="energy/")
+
+            whours_announcement.include_as_definitive("24h_penalty_whours", round(penalty_whours_24, 3))
+            whours_announcement.include_as_definitive("24h_shunt1_whours", round(shunt_1_whours_24h, 3))
+            whours_announcement.include_as_definitive("24h_shunt2_whours", round(shunt_2_whours_24h, 3))
+            whours_announcement.include_as_definitive("24h_shunt3_whours", round(shunt_3_whours_24h, 3))
+            whours_announcement.transmit()
+
+            # Here we used to aggregate whours since last float.  This has proven not to be terribly useful.
+            # next_aggregate_time = aggregator.go(next_aggregate_time, zero_out=zero_out)
+            next_aggregate_time = now + datetime.timedelta(minutes=1)
+            print("Average voltage for past 24 hours is {}".format(mean_voltage))
 
