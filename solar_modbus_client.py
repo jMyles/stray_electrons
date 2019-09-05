@@ -58,14 +58,28 @@ next_aggregate_time = datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
 print("Will aggregate at %s" % next_aggregate_time)
 next_charge_state_check_time = maya.now()
 
+readings_since_problem = 0
+
 while True:
     before = time.time()
     try:
         result_reading = CHARGE_CONTROLLER.read_holding_registers(0, 68, unit=0x01)
-        result_list = result_reading.registers
+        try:
+            result_list = result_reading.registers
+        except AttributeError as e:
+            print("Got {} instead of a good reading (after {} good readings).".format(result_reading, readings_since_problem))
+            readings_since_problem = 0
+            continue
     except Exception as e:
-        print("Encountered (%s) while reading" % (e))
+        print("Encountered ({}) while reading (after {} good readings)".format(f, readings_since_problem))
+        readings_since_problem = 0
         continue
+    else:
+        if DEBUG or readings_since_problem == 0:
+            print("Good reading: {}".format(result_list))
+        elif not readings_since_problem % 100:
+            print("{} consecutive good readings.".format(readings_since_problem))
+        readings_since_problem += 1
     finally:
         CHARGE_CONTROLLER.close()
     after = time.time()
@@ -101,7 +115,7 @@ while True:
         average_voltage = announcement.influx_payload['fields']['battery_voltage']
         # Get yesterday's voltage at this time
         v_response = INFLUX_CLIENT.query(
-            f"select battery_voltage FROM solar_controller_readings WHERE time > {maya.when('yesterday').epoch}s ORDER BY time ASC LIMIT 1")
+            "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC LIMIT 1".format(maya.when('yesterday').epoch))
         yesterday_voltage = list(v_response.get_points())[0]['battery_voltage']
         voltage_diff = round(average_voltage - yesterday_voltage, 3)
         announcement.include_as_definitive("24h_voltage_change", voltage_diff)

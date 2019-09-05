@@ -13,9 +13,20 @@ MQTT_CLIENT = mqtt.Client()
 MQTT_CLIENT.connect(host, 1883, 60)
 
 
-try:
-    CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.101')
-    CHARGE_CONTROLLER.read_holding_registers(0, 68, unit=0x01)
-except ConnectionException:
-    CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.102')
+possible_controller_addresses = ('10.0.80.101', '10.0.80.102')
+
+for address in possible_controller_addresses:
+    try:
+        CHARGE_CONTROLLER = ModbusTcpClient(address)
+        reading = CHARGE_CONTROLLER.read_holding_registers(0, 68, unit=0x01)
+        assert reading.registers
+        print("Found controller at {}".format(address))
+        CHARGE_CONTROLLER.close()
+        break
+    except (ConnectionException, AttributeError) as e:
+        print("No controller at {}, got {}".format(address, e))
+        continue
+else:
+    raise ConnectionError("Can't find a controller.")
+
 
