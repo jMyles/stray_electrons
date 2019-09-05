@@ -2,6 +2,7 @@ from __future__ import print_function
 import maya
 import time
 import datetime
+from pymodbus.exceptions import ConnectionException
 from pymodbus.client.sync import ModbusTcpClient
 
 from aggregate import EnergyAggregator
@@ -30,7 +31,11 @@ MQTT_CLIENT = mqtt.Client()
 MQTT_CLIENT.connect(host, 1883, 60)
 
 
-CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.101')
+try:
+    CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.101')
+    CHARGE_CONTROLLER.read_holding_registers(0, 68, unit=0x01)
+except ConnectionException:
+    CHARGE_CONTROLLER = ModbusTcpClient('10.0.80.102')
 
 
 CHARGE_STATES = (
