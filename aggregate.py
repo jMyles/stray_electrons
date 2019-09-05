@@ -61,7 +61,7 @@ class EnergyAggregator(object):
         results = INFLUX_CLIENT.query(query)
         self.readings = list(results.get_points())
 
-    def get_amp_averages(self, begin=None):
+    def get_amp_averages(self, begin=None, end_minute=None):
         """
         Get amp averages for readings taken so far, with granularity of 1 minute.
 
@@ -76,7 +76,8 @@ class EnergyAggregator(object):
             begin = begin_maya.datetime(naive=True)
         # Initial loop setup
         begin_minute = begin
-        end_minute = begin + datetime.timedelta(minutes=1)
+        if not end_minute:
+            end_minute = begin + datetime.timedelta(minutes=1)
         amp_averages = []
         amp_readings = {}
 
