@@ -97,6 +97,14 @@ while True:
         charge_state = CHARGE_STATES[result_list[50]]
         announcement.include_as_definitive("target_voltage", round(target_voltage, 3))
         announcement.include_as_definitive("charge_state", charge_state)
+        announcement.do_averages()
+        average_voltage = announcement.influx_payload['fields']['battery_voltage']
+        # Get yesterday's voltage at this time
+        v_response = INFLUX_CLIENT.query(
+            f"select battery_voltage FROM solar_controller_readings WHERE time > {maya.when('yesterday').epoch}s ORDER BY time ASC LIMIT 1")
+        yesterday_voltage = list(v_response.get_points())[0]['battery_voltage']
+        voltage_diff = round(average_voltage - yesterday_voltage, 3)
+        announcement.include_as_definitive("24h_voltage_change", voltage_diff)
         announcement.transmit()
 
         announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
