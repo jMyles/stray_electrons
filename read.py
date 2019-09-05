@@ -8,7 +8,7 @@ import os
 from push_to_datastores import Announcement
 
 DEBUG = False
-PENALTY = .15
+PENALTY = .18
 
 import paho.mqtt.client as mqtt
 from influxdb import InfluxDBClient
