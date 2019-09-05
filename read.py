@@ -36,11 +36,24 @@ while True:
                 print("Unable to read JSON: %s" % json_power_dict, error)
             continue
 
-    shunt_announcement.include_for_average("shunt_1", power_dict['a1'])
-    shunt_announcement.include_for_average("shunt_2", power_dict['a2'])
-    shunt_announcement.include_for_average("shunt_3", power_dict['a3'])
+    a1_reading = power_dict['a1']
+    a2_reading = power_dict['a2']
+    a3_reading = power_dict['a3']
 
-    net = power_dict['a1'] + power_dict['a2'] + power_dict['a3']
+    if a1_reading > 90:
+        a1_reading = 0
+
+    if a2_reading > 90:
+        a2_reading = 0
+
+    if a3_reading > 90:
+        a3_reading = 0
+
+    shunt_announcement.include_for_average("shunt_1", a1_reading)
+    shunt_announcement.include_for_average("shunt_2", a2_reading)
+    shunt_announcement.include_for_average("shunt_3", a3_reading)
+
+    net = a1_reading + a2_reading + a3_reading
     if net < 0:
         penalty = net * PENALTY
     else:
