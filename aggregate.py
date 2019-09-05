@@ -53,6 +53,7 @@ class EnergyAggregator(object):
         return first_reading
 
     def take_readings(self, begin, end=None):
+        begin = begin + datetime.timedelta(seconds=1)  # Because influx requires us to strip off microseconds.
         if not end:
             end = datetime.datetime.utcnow()
         query = """SELECT * FROM "shunt_readings" WHERE time <= '%s' AND time > '%s' ORDER BY time ASC;""" % (
