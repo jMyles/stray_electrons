@@ -49,6 +49,7 @@ class EnergyAggregator(object):
         return aggregate_time + datetime.timedelta(minutes=1)
 
     def get_earliest_reading(self):
+        raise NotImplementedError("This method is in transition.")
         first_reading = min(self.readings, key=lambda r: r['time'])
         return first_reading
 
@@ -93,7 +94,7 @@ class EnergyAggregator(object):
                     raise ValueError("Result (%s) was outside analysis boundary (%s to %s).  What the heck?" % (
                     reading_time, begin_minute, end_minute))
 
-            if reading_time > end_minute or result == self.readings[-1]:
+            if reading_time > end_minute or result == readings[-1]:
                 # If this reading is beyond the end of the minute we're analyzing,
                 # we must have finished this minute.  Or maybe it's the very last reading.
                 # So, let's take an average for this minute and then move on if there's more.
