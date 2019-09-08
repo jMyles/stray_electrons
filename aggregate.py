@@ -59,9 +59,9 @@ class EnergyAggregator(object):
         query = """SELECT * FROM "shunt_readings" WHERE time <= '%s' AND time > '%s' ORDER BY time ASC;""" % (
             end.strftime('%Y-%m-%dT%H:%M:%SZ'), begin.strftime('%Y-%m-%dT%H:%M:%SZ'))
         results = INFLUX_CLIENT.query(query)
-        self.readings = list(results.get_points())
+        return results.get_points()
 
-    def get_amp_averages(self, begin=None, end_minute=None):
+    def get_amp_averages(self, readings, begin=None, end_minute=None, ignore_past_readings=False):
         """
         Get amp averages for readings taken so far, with granularity of 1 minute.
 
@@ -81,14 +81,17 @@ class EnergyAggregator(object):
         amp_averages = []
         amp_readings = {}
 
-        for result in self.readings:
+        for result in readings:
 
             result_time = result.pop('time')
             reading_time = maya.MayaDT.from_rfc2822(result_time).datetime(naive=True)
 
             if (reading_time < begin_minute):
-                raise ValueError("Result (%s) was outside analysis boundary (%s to %s).  What the heck?" % (
-                reading_time, begin_minute, end_minute))
+                if ignore_past_readings:
+                    continue
+                else:
+                    raise ValueError("Result (%s) was outside analysis boundary (%s to %s).  What the heck?" % (
+                    reading_time, begin_minute, end_minute))
 
             if reading_time > end_minute or result == self.readings[-1]:
                 # If this reading is beyond the end of the minute we're analyzing,
@@ -114,8 +117,7 @@ class EnergyAggregator(object):
                     amp_readings[shunt] = []
                 amp_readings[shunt].append(current)
 
-        self.amp_averages = amp_averages
-
+        return amp_averages
 
     def get_most_recent_aggregation(self, before_dt):
         """

@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from statistics import mean
+from statistics import mean, StatisticsError
 
 import maya
 import time
@@ -119,9 +119,14 @@ while True:
         # Get yesterday's voltage at this time
         v_response = INFLUX_CLIENT.query(
             "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC LIMIT 1".format(int(maya.when('yesterday').epoch)))
-        _24h_ago_voltage = list(v_response.get_points())[0]['battery_voltage']
-        voltage_diff = round(average_voltage - _24h_ago_voltage, 3)
-        announcement.include_as_definitive("24h_voltage_change", voltage_diff)
+        try:
+            _24h_ago_voltage = list(v_response.get_points())[0]['battery_voltage']
+        except IndexError:
+            # For whatever reason, we don't have voltage from 24 hours ago.
+            print("Voltage from 24 hours ago is unknown.")
+        else:
+            voltage_diff = round(average_voltage - _24h_ago_voltage, 3)
+            announcement.include_as_definitive("24h_voltage_change", voltage_diff)
         announcement.transmit()
 
         announcement = Announcement("solar_controller_readings", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
@@ -155,8 +160,8 @@ while True:
             zero_out = charge_state == "FLOAT"
             aggregator = EnergyAggregator()
             yesterday = maya.when("yesterday").datetime(naive=True)
-            aggregator.take_readings(begin=yesterday, end=now)
-            aggregator.get_amp_averages(begin=yesterday, end_minute=now)
+            readings = aggregator.take_readings(begin=yesterday, end=now)
+            amp_averages = aggregator.get_amp_averages(readings=readings, begin=yesterday, end_minute=now)
             previous_aggregate_time = next_aggregate_time
 
             # Average voltage over last 24 hours.
@@ -164,30 +169,37 @@ while True:
                 "select battery_voltage FROM solar_controller_readings WHERE time > {}s ORDER BY time ASC".format(
                     int(maya.when('yesterday').epoch)))
             _24h_voltages = [r['battery_voltage'] for r in v_response.get_points()]
-            mean_voltage = mean(_24h_voltages)
-            min_voltage = min(_24h_voltages)
-            voltage_announcement = Announcement("voltage_24h_averages", INFLUX_CLIENT, MQTT_CLIENT, mqtt_topic_prefix="solar/")
-            voltage_announcement.include_as_definitive("24h_average_voltage", round(mean_voltage, 3))
-            voltage_announcement.include_as_definitive("24h_min_voltage", round(min_voltage, 3))
-            voltage_announcement.transmit()
+
+            if len(_24h_voltages) > 50:
+                mean_voltage = mean(_24h_voltages)
+                min_voltage = min(_24h_voltages)
+                voltage_announcement = Announcement("voltage_24h_averages", INFLUX_CLIENT, MQTT_CLIENT,
+                                                    mqtt_topic_prefix="solar/")
+                voltage_announcement.include_as_definitive("24h_average_voltage", round(mean_voltage, 3))
+                voltage_announcement.include_as_definitive("24h_min_voltage", round(min_voltage, 3))
+                voltage_announcement.transmit()
+
+            else:
+                print("Don't have enough values from yesterday to determine lookback mean or min.")
 
             # Get the whours for each value.
             # We take the average amps through the past 24 hours.
-            penalty_whours_24 = aggregator.amp_averages[0][1]['penalty']
-            shunt_1_whours_24h = aggregator.amp_averages[0][1]['shunt_1']
-            shunt_2_whours_24h = aggregator.amp_averages[0][1]['shunt_2']
-            shunt_3_whours_24h = aggregator.amp_averages[0][1]['shunt_3']
-            whours_announcement = Announcement("shunt_readings_24h_average", INFLUX_CLIENT, MQTT_CLIENT,
-                                                mqtt_topic_prefix="energy/")
+            try:
+                penalty_whours_24 = amp_averages[0][1]['penalty']
+                shunt_1_whours_24h = amp_averages[0][1]['shunt_1']
+                shunt_2_whours_24h = amp_averages[0][1]['shunt_2']
+                shunt_3_whours_24h = amp_averages[0][1]['shunt_3']
+                whours_announcement = Announcement("shunt_readings_24h_average", INFLUX_CLIENT, MQTT_CLIENT,
+                                                    mqtt_topic_prefix="energy/")
 
-            whours_announcement.include_as_definitive("24h_penalty_whours", round(penalty_whours_24, 3))
-            whours_announcement.include_as_definitive("24h_shunt1_whours", round(shunt_1_whours_24h, 3))
-            whours_announcement.include_as_definitive("24h_shunt2_whours", round(shunt_2_whours_24h, 3))
-            whours_announcement.include_as_definitive("24h_shunt3_whours", round(shunt_3_whours_24h, 3))
-            whours_announcement.transmit()
-
+                whours_announcement.include_as_definitive("24h_penalty_whours", round(penalty_whours_24, 3))
+                whours_announcement.include_as_definitive("24h_shunt1_whours", round(shunt_1_whours_24h, 3))
+                whours_announcement.include_as_definitive("24h_shunt2_whours", round(shunt_2_whours_24h, 3))
+                whours_announcement.include_as_definitive("24h_shunt3_whours", round(shunt_3_whours_24h, 3))
+                whours_announcement.transmit()
+            except IndexError:
+                print("Not enough data from 24 hours to do whours lookback.")
             # Here we used to aggregate whours since last float.  This has proven not to be terribly useful.
             # next_aggregate_time = aggregator.go(next_aggregate_time, zero_out=zero_out)
             next_aggregate_time = now + datetime.timedelta(minutes=1)
-            print("Average voltage for past 24 hours is {}".format(mean_voltage))
-
+            print("Done with aggregation.  Will do it again at {}".format(next_aggregate_time))

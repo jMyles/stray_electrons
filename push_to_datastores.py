@@ -38,9 +38,6 @@ class Announcement(object):
                 self.include_as_definitive(topic, round(average_for_this_data_point, 3))
 
     def transmit(self):
-
-        if DEBUG:
-            print("Averaging %s data points" % len(self.averages.values()[0]))
         self.influx_client.write_points([self.influx_payload])
         for topic, content in self.mqtt_payload.items():
             self.mqtt_client.publish(self.mqtt_topic_prefix + topic, content)
