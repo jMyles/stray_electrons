@@ -161,7 +161,7 @@ while True:
             aggregator = EnergyAggregator()
             yesterday = maya.when("yesterday").datetime(naive=True)
             readings = aggregator.take_readings(begin=yesterday, end=now)
-            amp_averages = aggregator.get_amp_averages(readings=readings, begin=yesterday, end_minute=now)
+            amp_averages = aggregator.get_amp_averages(readings=list(readings), begin=yesterday, end_minute=now)
             previous_aggregate_time = next_aggregate_time
 
             # Average voltage over last 24 hours.
