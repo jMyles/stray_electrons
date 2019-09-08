@@ -62,6 +62,7 @@ while True:
     shunt_announcement.include_for_average("penalty", penalty)
 
     if time.time() > transmit_time:
+        shunt_announcement.do_averages()
         shunt_announcement.transmit()
         for topic, value in shunt_announcement.mqtt_payload.items():
             MQTT_CLIENT.publish("house/power/" + topic.replace("shunt", "watts"), round(value * 12, 3))
